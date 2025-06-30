@@ -1,0 +1,5 @@
+# Ignorar variables de entorno
+.env
+
+# Ignorar ejecutables locales
+lider-api
