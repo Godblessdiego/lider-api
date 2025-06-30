@@ -1,16 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Product representa un producto extraído de Lider
-// Extiende según tu JSON real
-
 type Product struct {
 	ID          string    `json:"ID"`
 	Brand       string    `json:"brand"`
@@ -20,19 +21,19 @@ type Product struct {
 	Images      Images    `json:"images"`
 }
 
-// PriceInfo mapea los precios retornados
+// PriceInfo mapea precios de la respuesta
 type PriceInfo struct {
 	BasePriceReference float64 `json:"BasePriceReference"`
 	BasePriceSales     float64 `json:"BasePriceSales"`
 }
 
-// Images contiene URLs de las imágenes del producto
+// Images contiene URLs de imágenes
 type Images struct {
 	DefaultImage string `json:"defaultImage"`
 	MediumImage  string `json:"mediumImage"`
 }
 
-// Response mapea una respuesta genérica con productos
+// Response mapea la estructura JSON de /search
 type Response struct {
 	Products []Product `json:"products"`
 	NbHits   int       `json:"nbHits"`
@@ -40,143 +41,207 @@ type Response struct {
 	NbPages  int       `json:"nbPages"`
 }
 
-// SuggestionResponse mapea sugerencias de autocompletar
+// SuggestionResponse mapea /suggestions
 type SuggestionResponse struct {
 	Suggestions []string `json:"suggestions"`
 }
 
-// handleSearch maneja GET /productos?q=
-func handleSearch(ctx *gin.Context) {
-	query := ctx.Query("q")
-	if query == "" {
-		ctx.JSON(400, gin.H{"error": "parámetro 'q' es requerido"})
-		return
-	}
-	products, err := fetchProducts(query)
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, products)
-}
-
-// handleSuggestions maneja GET /suggestions?term=
-func handleSuggestions(ctx *gin.Context) {
-	term := ctx.Query("term")
-	if term == "" {
-		ctx.JSON(400, gin.H{"error": "parámetro 'term' es requerido"})
-		return
-	}
-	suggestions, err := fetchSuggestions(term)
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, suggestions)
-}
-
-// handlePromotions maneja GET /promotions?type=
-func handlePromotions(ctx *gin.Context) {
-	promo := ctx.Query("type")
-	if promo == "" {
-		ctx.JSON(400, gin.H{"error": "parámetro 'type' es requerido"})
-		return
-	}
-	products, err := fetchPromotions(promo)
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, products)
-}
-
-// handleCategories maneja GET /categories?id=
-func handleCategories(ctx *gin.Context) {
-	cat := ctx.Query("id")
-	if cat == "" {
-		ctx.JSON(400, gin.H{"error": "parámetro 'id' es requerido"})
-		return
-	}
-	products, err := fetchCategory(cat)
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, products)
-}
-
-// fetchProducts hace POST a /search y pagina resultados
+// fetchProducts usa GET al endpoint público de búsqueda con paginación
 func fetchProducts(query string) ([]Product, error) {
-	url := "https://apps.lider.cl/search"
-	// Payload base
-	base := map[string]interface{}{"query": query, "size": 20}
-	// Primera llamada para leer nbPages
-	data, err := doPost(url, base)
+	endpoint := "https://apps.lider.cl/supermercado/search"
+	escape := url.QueryEscape(query)
+
+	// primera página
+	u := fmt.Sprintf("%s?query=%s&page=1", endpoint, escape)
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
-	var res Response
-	if err := json.Unmarshal(data, &res); err != nil {
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search failed: %s – %s", resp.Status, string(body))
+	}
+
+	var r Response
+	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
 	}
-	all := res.Products
-	// Paginación concurrente
-	for p := 2; p <= res.NbPages; p++ {
-		base["page"] = p
-		chunk, _ := postAndParse(url, base)
-		all = append(all, chunk...)
+
+	all := r.Products
+	// páginas adicionales
+	for p := 2; p <= r.NbPages; p++ {
+		u := fmt.Sprintf("%s?query=%s&page=%d", endpoint, escape, p)
+		resp, err := http.Get(u)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+		var rp Response
+		if err := json.Unmarshal(body, &rp); err != nil {
+			continue
+		}
+		all = append(all, rp.Products...)
 	}
 	return all, nil
 }
 
-// fetchSuggestions, fetchPromotions, fetchCategory y helpers…
-
+// fetchSuggestions usa GET al endpoint de sugerencias
 func fetchSuggestions(term string) ([]string, error) {
-	url := "https://apps.lider.cl/suggestions"
-	payload := map[string]interface{}{"term": term}
-	data, err := doPost(url, payload)
+	endpoint := "https://apps.lider.cl/supermercado/suggestions"
+	u := fmt.Sprintf("%s?term=%s", endpoint, url.QueryEscape(term))
+
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("suggest failed: %s – %s", resp.Status, string(body))
+	}
+
 	var sr SuggestionResponse
-	if err := json.Unmarshal(data, &sr); err != nil {
+	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, err
 	}
 	return sr.Suggestions, nil
 }
 
-func fetchPromotions(p string) ([]Product, error) {
-	return postAndParse("https://apps.lider.cl/promotions", map[string]interface{}{"promoType": p})
-}
-func fetchCategory(c string) ([]Product, error) {
-	return postAndParse("https://apps.lider.cl/category", map[string]interface{}{"categoryId": c, "size": 20})
-}
+// fetchPromotions usa GET al endpoint de promociones
+func fetchPromotions(promoType string) ([]Product, error) {
+	endpoint := "https://apps.lider.cl/supermercado/promotions"
+	u := fmt.Sprintf("%s?type=%s", endpoint, url.QueryEscape(promoType))
 
-func postAndParse(url string, payload map[string]interface{}) ([]Product, error) {
-	data, err := doPost(url, payload)
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("promotions failed: %s – %s", resp.Status, string(body))
+	}
+
 	var r Response
-	if err := json.Unmarshal(data, &r); err != nil {
+	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
 	}
 	return r.Products, nil
 }
 
-func doPost(url string, payload map[string]interface{}) ([]byte, error) {
-	bodyReq, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(bodyReq))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	client := &http.Client{}
-	resp, err := client.Do(req)
+// fetchCategory usa GET al endpoint de categoría
+func fetchCategory(categoryID string) ([]Product, error) {
+	endpoint := "https://apps.lider.cl/supermercado/category"
+	u := fmt.Sprintf("%s?id=%s", endpoint, url.QueryEscape(categoryID))
+
+	resp, err := http.Get(u)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("petición fallida: " + resp.Status)
+		return nil, fmt.Errorf("category failed: %s – %s", resp.Status, string(body))
 	}
-	return io.ReadAll(resp.Body)
+
+	var r Response
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, err
+	}
+	return r.Products, nil
+}
+
+// apiKeyAuthMiddleware fuerza que el header X-API-Key coincida con la variable de entorno API_KEY
+func apiKeyAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.GetHeader("X-API-Key")
+		if key == "" || key != os.Getenv("API_KEY") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API key inválida"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// Handlers
+func handleSearch(c *gin.Context) {
+	q := c.Query("q")
+	if q == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "se requiere q"})
+		return
+	}
+	prods, err := fetchProducts(q)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, prods)
+}
+
+func handleSuggestions(c *gin.Context) {
+	term := c.Query("term")
+	if term == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "se requiere term"})
+		return
+	}
+	suggestions, err := fetchSuggestions(term)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, suggestions)
+}
+
+func handlePromotions(c *gin.Context) {
+	p := c.Query("type")
+	if p == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "se requiere type"})
+		return
+	}
+	prods, err := fetchPromotions(p)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, prods)
+}
+
+func handleCategories(c *gin.Context) {
+	id := c.Query("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "se requiere id"})
+		return
+	}
+	prods, err := fetchCategory(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, prods)
+}
+
+func main() {
+	if os.Getenv("API_KEY") == "" {
+		fmt.Println("ERROR: debes definir API_KEY en el entorno")
+		return
+	}
+
+	router := gin.Default()
+	router.Use(apiKeyAuthMiddleware())
+
+	router.GET("/productos", handleSearch)
+	router.GET("/suggestions", handleSuggestions)
+	router.GET("/promotions", handlePromotions)
+	router.GET("/categories", handleCategories)
+
+	router.Run(":8080")
 }
