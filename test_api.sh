@@ -115,7 +115,22 @@ make_request "GET" "/categories?id=123"
 # Test 9: Categories with empty id (should fail)
 make_request "GET" "/categories?id="
 
-# Test 10: Authentication test (invalid API key)
+# Test 10: Product Detail by SKU (path parameter)
+make_request "GET" "/product/4522432"
+
+# Test 11: Product Detail by SKU (query parameter)
+make_request "GET" "/product?sku=4522432"
+
+# Test 12: Product Detail by URL
+make_request "GET" "/product?url=https://www.lider.cl/supermercado/product/sku/4522432/lider-leche-semidescremada-1-l"
+
+# Test 13: Product Detail with empty SKU (should fail)
+make_request "GET" "/product?sku="
+
+# Test 14: Product Detail with no parameters (should fail)
+make_request "GET" "/product"
+
+# Test 15: Authentication test (invalid API key)
 echo -e "\n${BLUE}===========================================${NC}"
 echo -e "${BLUE}Testing: Authentication with invalid key${NC}"
 echo -e "${BLUE}===========================================${NC}"
@@ -138,7 +153,7 @@ else
     print_error "Authentication test failed - expected 403, got $http_code"
 fi
 
-# Test 11: Authentication test (missing API key)
+# Test 16: Authentication test (missing API key)
 echo -e "\n${BLUE}===========================================${NC}"
 echo -e "${BLUE}Testing: Authentication with missing key${NC}"
 echo -e "${BLUE}===========================================${NC}"
@@ -176,3 +191,6 @@ echo -e "  GET /productos?q=term          - Search products"
 echo -e "  GET /suggestions?term=partial  - Get search suggestions"
 echo -e "  GET /promotions?type=promo     - Get promotions"
 echo -e "  GET /categories?id=cat_id      - Get category products"
+echo -e "  GET /product/:sku              - Get product detail by SKU"
+echo -e "  GET /product?sku=sku           - Get product detail by SKU param"
+echo -e "  GET /product?url=product_url   - Get product detail by URL"

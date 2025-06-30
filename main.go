@@ -48,8 +48,19 @@ func main() {
 	router.GET("/suggestions", handleSuggestions)
 	router.GET("/promotions", handlePromotions)
 	router.GET("/categories", handleCategories)
+	router.GET("/product/:sku", handleProductDetail)
+	router.GET("/product", handleProductDetail) // /product?sku=4522432 or /product?url=...
 
 	log.Printf("Starting server on port %s", port)
+	log.Printf("Available endpoints:")
+	log.Printf("  GET /health - Health check")
+	log.Printf("  GET /productos?q=term - Search products")
+	log.Printf("  GET /suggestions?term=partial - Get suggestions")
+	log.Printf("  GET /promotions?type=promo - Get promotions")
+	log.Printf("  GET /categories?id=cat_id - Get category products")
+	log.Printf("  GET /product/:sku - Get product detail by SKU")
+	log.Printf("  GET /product?sku=sku - Get product detail by SKU parameter")
+
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
@@ -64,7 +75,7 @@ func handleSearch(c *gin.Context) {
 		})
 		return
 	}
-	prods, err := fetchProducts(q)
+	prods, err := fetchProductsAdvanced(q)
 	if err != nil {
 		log.Printf("Error fetching products for query '%s': %v", q, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -89,7 +100,7 @@ func handleSuggestions(c *gin.Context) {
 		})
 		return
 	}
-	suggestions, err := fetchSuggestions(term)
+	suggestions, err := fetchSuggestionsAdvanced(term)
 	if err != nil {
 		log.Printf("Error fetching suggestions for term '%s': %v", term, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -114,7 +125,7 @@ func handlePromotions(c *gin.Context) {
 		})
 		return
 	}
-	prods, err := fetchPromotions(promo)
+	prods, err := fetchPromotionsAdvanced(promo)
 	if err != nil {
 		log.Printf("Error fetching promotions for type '%s': %v", promo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -139,7 +150,7 @@ func handleCategories(c *gin.Context) {
 		})
 		return
 	}
-	prods, err := fetchCategory(cat)
+	prods, err := fetchCategoryAdvanced(cat)
 	if err != nil {
 		log.Printf("Error fetching category for id '%s': %v", cat, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -153,4 +164,35 @@ func handleCategories(c *gin.Context) {
 		"count":       len(prods),
 		"products":    prods,
 	})
+}
+
+func handleProductDetail(c *gin.Context) {
+	sku := c.Param("sku")
+	if sku == "" {
+		sku = c.Query("sku")
+	}
+
+	// También permitir URL completa
+	if productURL := c.Query("url"); productURL != "" {
+		sku = extractSKUFromURL(productURL)
+	}
+
+	if sku == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "se requiere parámetro 'sku' o 'url'",
+			"example": "/product/4522432 o /product?sku=4522432 o /product?url=https://www.lider.cl/supermercado/product/sku/4522432/...",
+		})
+		return
+	}
+
+	detail, err := fetchProductDetailAdvanced(sku)
+	if err != nil {
+		log.Printf("Error fetching product detail for SKU '%s': %v", sku, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Error interno del servidor",
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, detail)
 }
