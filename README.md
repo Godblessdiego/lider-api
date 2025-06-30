@@ -22,7 +22,7 @@ Una API REST para consultar productos, promociones y sugerencias del supermercad
 
 1. Clona el repositorio:
 ```bash
-git clone 
+git clone https://github.com/Godblessdiego/lider-api
 cd lider-api
 ```
 
